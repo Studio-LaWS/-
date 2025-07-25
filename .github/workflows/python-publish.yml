@@ -1,0 +1,118 @@
+
+
+@bot.tree.command(name="teller", description="Start of reset de teller in dit kanaal.")
+async def teller(interaction: discord.Interaction):
+    if not has_owner_role(interaction):
+        await interaction.response.send_message("❌ Alleen eigenaren mogen dit commando gebruiken.", ephemeral=True)
+        return
+
+    state = load_state()
+    state["channel_id"] = interaction.channel.id
+    state["last_number"] = 0
+    state["last_user"] = None
+    save_state(state)
+    await interaction.response.send_message("📢 Teller gestart! Begin met **1**.")
+
+
+@teller.error
+async def teller_error(interaction: discord.Interaction, error):
+    if isinstance(error, app_commands.CheckFailure):
+        await interaction.response.send_message(
+            "❌ Alleen gebruikers met de rol @eigenaar mogen dit gebruiken.",
+            ephemeral=True,
+        )
+
+@bot.tree.command(name="wat-is-het-beste-pretpark", description="Wat is het beste pretpark?")
+async def beste_pretpark(interaction: discord.Interaction):
+    await interaction.response.send_message("De Efteling natuurlijk! 🎢")
+
+@bot.event
+async def on_message(message):
+    if message.author.bot:
+        return
+
+    state = load_state()
+
+    if message.channel.id != state["channel_id"]:
+        return
+
+    try:
+        nummer = int(message.content.strip())
+    except ValueError:
+        return
+
+    if state["last_number"] == 0:
+        if nummer == 1:
+            # Eerste telling na reset
+            state["last_number"] = 1
+            state["last_user"] = message.author.id
+            save_state(state)
+            try:
+                await message.add_reaction("✅")
+            except discord.Forbidden:
+                pass
+        else:
+            await react_and_reset(state, message, f"❌ {message.author.mention}, je moet beginnen met **1**.")
+        return
+
+        if message.author.id == state["last_user"]:
+        await react_and_reset(state, message, f"❌ {message.author.mention}, je mag niet twee keer achter elkaar tellen!")
+        return
+
+    if nummer != state["last_number"] + 1:
+        await react_and_reset(state, message, f"❌ {message.author.mention}, fout! Het goede getal was **{state['last_number'] + 1}**.")
+        return
+
+    state["last_number"] = nummer
+    state["last_user"] = message.author.id
+    save_state(state)
+    try:
+        await message.add_reaction("✅")
+    except discord.Forbidden:
+        pass
+
+async def react_and_reset(state, message, foutmelding):
+    if message.author.id in reset_in_progress:
+        return  # negeer dubbele triggers kort achter elkaar
+
+    reset_in_progress.add(message.author.id)
+    try:
+        await message.add_reaction("❌")
+    except discord.Forbidden:
+        pass
+
+    await message.channel.send(f"{foutmelding}\n🔁 Teller is gereset naar **0**. Begin opnieuw met **1**.")
+    state["last_number"] = 0
+    state["last_user"] = None
+    save_state(state)
+
+    await asyncio.sleep(3) 
+    reset_in_progress.remove(message.author.id)
+
+@bot.event
+async def on_member_join(member):
+    channel = discord.utils.get(member.guild.text_channels, name="join-en-leave")
+    if channel:
+        await channel.send(f"👋 **{member.name}** is gekomen.")
+
+@bot.event
+async def on_member_remove(member):
+    channel = discord.utils.get(member.guild.text_channels, name="join-en-leave")
+    if channel:
+        await channel.send(f"👋 **{member.name}** heeft ons verlaten.")
+
+@bot.tree.command(name="clean", description="Verwijder een aantal berichten in dit kanaal.")
+@discord.app_commands.describe(aantal="Aantal berichten om te verwijderen (max 100)")
+async def clean(interaction: discord.Interaction, aantal: int):
+    if aantal < 1 or aantal > 100:
+        await interaction.response.send_message("❌ Kies een aantal tussen 1 en 100.", ephemeral=True)
+        return
+
+    await interaction.response.defer(ephemeral=True)
+
+    deleted = await interaction.channel.purge(limit=aantal)
+    await interaction.followup.send(f"🧹 {len(deleted)} berichten verwijderd.", ephemeral=True)
+
+
+
+bot.run(BOT_TOKEN)
